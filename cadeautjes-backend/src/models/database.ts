@@ -1,33 +1,32 @@
-import sqlite3 from 'sqlite3'
-import { promisify } from 'util'
+import Database from 'better-sqlite3'
 
-interface Database {
-  get: (sql: string, params?: any[]) => Promise<any>
-  all: (sql: string, params?: any[]) => Promise<any[]>
-  run: (sql: string, params?: any[]) => Promise<{ lastID?: number; changes?: number }>
+interface DatabaseInterface {
+  get: (sql: string, params?: any[]) => any
+  all: (sql: string, params?: any[]) => any[]
+  run: (sql: string, params?: any[]) => { lastInsertRowid?: number; changes?: number }
 }
 
 class DatabaseManager {
-  private db: sqlite3.Database
-  public async: Database
+  private db: Database.Database
+  public async: DatabaseInterface
 
   constructor() {
-    this.db = new sqlite3.Database('./cadeautjes.db')
+    this.db = new Database('./cadeautjes.db')
     
-    // Promisify database methods
+    // better-sqlite3 is synchronous, so we create a sync interface
     this.async = {
-      get: promisify(this.db.get.bind(this.db)),
-      all: promisify(this.db.all.bind(this.db)),
-      run: promisify(this.db.run.bind(this.db))
+      get: (sql: string, params?: any[]) => this.db.prepare(sql).get(params),
+      all: (sql: string, params?: any[]) => this.db.prepare(sql).all(params),
+      run: (sql: string, params?: any[]) => this.db.prepare(sql).run(params)
     }
     
     this.initializeTables()
   }
 
-  private async initializeTables() {
+  private initializeTables() {
     try {
       // Users table
-      await this.async.run(`
+      this.async.run(`
         CREATE TABLE IF NOT EXISTS users (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           email TEXT UNIQUE NOT NULL,
@@ -39,7 +38,7 @@ class DatabaseManager {
       `)
 
       // Gift types table
-      await this.async.run(`
+      this.async.run(`
         CREATE TABLE IF NOT EXISTS gift_types (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           name TEXT NOT NULL,
@@ -52,7 +51,7 @@ class DatabaseManager {
       `)
 
       // User gift inventory
-      await this.async.run(`
+      this.async.run(`
         CREATE TABLE IF NOT EXISTS user_gifts (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           user_id INTEGER NOT NULL,
@@ -65,7 +64,7 @@ class DatabaseManager {
       `)
 
       // Transactions table
-      await this.async.run(`
+      this.async.run(`
         CREATE TABLE IF NOT EXISTS transactions (
           id TEXT PRIMARY KEY,
           sender_id INTEGER NOT NULL,
@@ -83,7 +82,7 @@ class DatabaseManager {
       `)
 
       // Partners table
-      await this.async.run(`
+      this.async.run(`
         CREATE TABLE IF NOT EXISTS partners (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           business_name TEXT NOT NULL,
@@ -99,11 +98,11 @@ class DatabaseManager {
       `)
 
       // Purchases table (for website purchases)
-      await this.async.run(`
+      this.async.run(`
         CREATE TABLE IF NOT EXISTS purchases (
           id TEXT PRIMARY KEY,
           user_id INTEGER NOT NULL,
-          items TEXT NOT NULL, -- JSON string
+          items TEXT NOT NULL,
           total_amount DECIMAL(10,2) NOT NULL,
           status TEXT DEFAULT 'completed',
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -114,16 +113,16 @@ class DatabaseManager {
       console.log('✅ Database tables initialized')
       
       // Insert sample gift types
-      await this.insertSampleData()
+      this.insertSampleData()
       
     } catch (error) {
       console.error('❌ Database initialization error:', error)
     }
   }
 
-  private async insertSampleData() {
+  private insertSampleData() {
     // Check if gift types already exist
-    const existingGifts = await this.async.get('SELECT COUNT(*) as count FROM gift_types')
+    const existingGifts = this.async.get('SELECT COUNT(*) as count FROM gift_types')
     
     if (existingGifts.count === 0) {
       const giftTypes = [
@@ -134,7 +133,7 @@ class DatabaseManager {
         { name: 'Cocktail', emoji: '🍸', description: 'Een cocktail naar keuze', price: 7.50, category: 'drinks' },
         
         // Food
-        { name: 'Pizza Slice', emoji: '🍕', description: 'Een punt pizza bij pizzeria', price: 3.25, category: 'food' },
+        { name: 'Pizza Slice', emoji: '��', description: 'Een punt pizza bij pizzeria', price: 3.25, category: 'food' },
         { name: 'Taartje', emoji: '🍰', description: 'Een stuk taart bij bakkerij', price: 3.75, category: 'food' },
         { name: 'Lunch', emoji: '🥪', description: 'Lunch deal bij restaurants', price: 8.50, category: 'food' },
         { name: 'IJsje', emoji: '🍨', description: 'Een bolletje ijs naar keuze', price: 2.25, category: 'food' },
@@ -150,7 +149,7 @@ class DatabaseManager {
       ]
 
       for (const gift of giftTypes) {
-        await this.async.run(
+        this.async.run(
           'INSERT INTO gift_types (name, emoji, description, price, category) VALUES (?, ?, ?, ?, ?)',
           [gift.name, gift.emoji, gift.description, gift.price, gift.category]
         )
@@ -160,13 +159,13 @@ class DatabaseManager {
     }
 
     // Create demo user
-    const existingUser = await this.async.get('SELECT id FROM users WHERE email = ?', ['demo@cadeautjes.app'])
+    const existingUser = this.async.get('SELECT id FROM users WHERE email = ?', ['demo@cadeautjes.app'])
     
     if (!existingUser) {
       const bcrypt = require('bcryptjs')
-      const hashedPassword = await bcrypt.hash('demo123', 10)
+      const hashedPassword = bcrypt.hashSync('demo123', 10)
       
-      await this.async.run(
+      this.async.run(
         'INSERT INTO users (email, name, password_hash) VALUES (?, ?, ?)',
         ['demo@cadeautjes.app', 'Demo User', hashedPassword]
       )
@@ -175,13 +174,8 @@ class DatabaseManager {
     }
   }
 
-  async close() {
-    return new Promise<void>((resolve, reject) => {
-      this.db.close((err) => {
-        if (err) reject(err)
-        else resolve()
-      })
-    })
+  close() {
+    this.db.close()
   }
 }
 
